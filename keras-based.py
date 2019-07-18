@@ -12,6 +12,7 @@ import numpy as np
 import pickle
 import tensorflow as tf
 from tensorflow.keras.applications.vgg16 import VGG16
+from tensorflow.keras.applications.resnet50 import ResNet50
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.utils import multi_gpu_model
 
@@ -24,10 +25,10 @@ def load_data(input_file):
     d = unpickle(input_file)
     x = d['data']
     y = d['labels']
-#     x = np.dstack((x[:, :4096], x[:, 4096:8192], x[:, 8192:]))
-#     x = x.reshape((x.shape[0], 64, 64, 3))
-    x = np.dstack((x[:, :1024], x[:, 1024:2048], x[:, 2048:]))
-    x = x.reshape((x.shape[0], 32, 32, 3))
+    x = np.dstack((x[:, :4096], x[:, 4096:8192], x[:, 8192:]))
+    x = x.reshape((x.shape[0], 64, 64, 3))
+#    x = np.dstack((x[:, :1024], x[:, 1024:2048], x[:, 2048:]))
+#    x = x.reshape((x.shape[0], 32, 32, 3))
     return x, y
 
 def dense_to_one_hot(labels_dense, num_classes):
@@ -55,15 +56,15 @@ def split_dataset(features, labels, training = 0.8, validation = 0.3):
 
 _GPUs = 2
 _LR = 0.01
-_EPOCH = 60
-_BATCH_SIZE = 512
+_EPOCH = 200
+_BATCH_SIZE = 128
 
 # loading data from binary files
 X = []
 Y = []
-directory = '/home/tpc2/Downloads/32*32/training_data'
+directory = '/home/tpc2/Downloads/64*64/training_data'
 
-for i in range(3):
+for i in range(1):
     i = i + 1 
     x, y = load_data(directory + '/train_data_batch_%d' % i)
     X.extend(x)
@@ -82,34 +83,33 @@ train_x, train_y, val_x, val_y, test_x, test_y = split_dataset(X, Y)
 # preparing data generator
 
 train_datagen = ImageDataGenerator(
-        rescale=1. / 255,
         rotation_range=20,
         width_shift_range=0.2,
         height_shift_range=0.2,
         horizontal_flip=True,
-        vertical_flip=True)
+        preprocessing_function=tf.keras.applications.resnet50.preprocess_input)
 
-test_datagen = ImageDataGenerator(rescale=1. / 255)
+test_datagen = ImageDataGenerator(preprocessing_function=tf.keras.applications.resnet50.preprocess_input)
 
-train_generator = train_datagen.flow(train_x, train_y, batch_size=_BATCH_SIZE * (_GPUs * 2))
-validation_generator = test_datagen.flow(val_x, val_y, batch_size=_BATCH_SIZE * (_GPUs * 2))
-test_generator = test_datagen.flow(test_x, test_y, batch_size=_BATCH_SIZE * (_GPUs * 2))
+train_generator = train_datagen.flow(train_x, train_y, batch_size=_BATCH_SIZE * _GPUs)
+validation_generator = test_datagen.flow(val_x, val_y, batch_size=_BATCH_SIZE * _GPUs)
+test_generator = test_datagen.flow(test_x, test_y, batch_size=_BATCH_SIZE * _GPUs)
 
 
-with tf.device('/cpu:0'):
-    model = VGG16(include_top=True, weights=None, input_tensor=None, input_shape=(32,32,3), pooling=None, classes=1000)
-    opt = tf.keras.optimizers.SGD(lr = _LR, momentum = 0.9)
+#with tf.device('/cpu:0'):
+#    model = VGG16(include_top=True, weights=None, input_tensor=None, input_shape=(32,32,3), pooling=None, classes=1000)
+model = ResNet50(weights=None, input_shape=(64,64,3))
+opt = tf.keras.optimizers.SGD(lr = _LR, momentum = 0.9)
 
 para_model = multi_gpu_model(model, gpus = _GPUs, cpu_merge = True, cpu_relocation = False)
 para_model.compile(optimizer = opt, loss = 'categorical_crossentropy', metrics = ['accuracy'])
-para_model.summary()
 
 callbacks = [
     # Reduce the learning rate if training plateaues.
-    tf.keras.callbacks.ReduceLROnPlateau(patience=10, verbose = 1),
+    tf.keras.callbacks.ReduceLROnPlateau(patience=60, verbose = 1),
    
     # Early stopping
-    tf.keras.callbacks.EarlyStopping(monitor = 'val_loss', min_delta = 0, patience = 10, verbose = 1, mode = 'auto', baseline = None),
+#    tf.keras.callbacks.EarlyStopping(monitor = 'val_loss', min_delta = 0, patience = 10, verbose = 1, mode = 'auto', baseline = None),
     
     # Tensorboard
     tf.keras.callbacks.TensorBoard(log_dir='./keras_logs', histogram_freq=0, write_graph=True, write_grads=False, write_images=False)
